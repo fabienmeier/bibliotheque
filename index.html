@@ -620,7 +620,7 @@ header h1 em{font-style:normal;border-bottom:3px solid var(--accent);padding-bot
   .preview-cover{width:55px}
   .field-row{grid-template-columns:1fr}
   /* Inputs formulaire 16px anti-zoom iOS */
-  #f-title,#f-author,#f-isbn,#f-pub,#f-genre,#f-status,#f-format,#f-year,#f-total-pages,#f-rating,#f-tags,#f-comment{font-size:16px}
+  #f-amazon,#f-title,#f-author,#f-isbn,#f-pub,#f-genre,#f-status,#f-format,#f-year,#f-total-pages,#f-rating,#f-tags,#f-comment{font-size:16px}
 
   /* Setup token + import overlays : safe-area */
   #setup-overlay .modal-box,.import-overlay .modal-box{padding-bottom:max(1rem,env(safe-area-inset-bottom))}
@@ -728,6 +728,19 @@ body.view-mode::after{content:'Mode lecture';position:fixed;bottom:0.8rem;right:
 .scan-btn{padding:0.4rem 0.7rem;border:1px solid var(--line);border-radius:var(--radius);background:var(--surface2);cursor:pointer;font-size:0.78rem;white-space:nowrap;color:var(--ink2);font-family:'DM Sans',sans-serif}
 .scan-btn:hover{border-color:var(--ink3);color:var(--ink)}
 
+/* ── Import Amazon ── */
+.amz-group{padding-bottom:0.65rem;border-bottom:1px dashed var(--line)}
+.amz-warn{font-size:0.72rem;color:var(--dnf);margin-top:0.3rem;display:none;line-height:1.45}
+.amz-warn.show{display:block}
+.amz-warn.info{color:var(--ink3);font-style:italic}
+.amz-warn a{color:inherit;text-decoration:underline;cursor:pointer}
+.amz-help ol{margin:0.2rem 0 0 1.1rem;padding:0;font-size:0.8rem;color:var(--ink2);line-height:1.55}
+.amz-help li{margin-bottom:0.35rem}
+.amz-help h4{font-size:0.66rem;text-transform:uppercase;letter-spacing:0.1em;color:var(--ink);margin:1rem 0 0.35rem;font-weight:600}
+.amz-help h4:first-child{margin-top:0}
+.amz-bm{display:inline-block;padding:0.45rem 0.95rem;border:1px dashed var(--accent);color:var(--accent);border-radius:2px;text-decoration:none;font-size:0.82rem;cursor:grab;background:var(--accent-light)}
+.amz-code{display:flex;gap:0.4rem;align-items:center;margin-top:0.3rem}
+.amz-code code{flex:1;min-width:0;font-size:0.7rem;padding:0.35rem 0.5rem;background:var(--surface2);border:1px solid var(--line);border-radius:2px;overflow-x:auto;white-space:nowrap;color:var(--ink2)}
 /* ── Statistiques v2 ─────────────────────────────────────────────── */
 .st-wrap{max-width:1200px;margin:0 auto;padding:1.8rem 2rem 3rem}
 .st-mast{border-bottom:3px solid var(--ink);padding-bottom:1.4rem;margin-bottom:1.8rem;display:flex;justify-content:space-between;gap:2rem;align-items:flex-end;flex-wrap:wrap}
@@ -910,6 +923,7 @@ body.view-mode::after{content:'Mode lecture';position:fixed;bottom:0.8rem;right:
           <button class="more-menu-item" id="travail-btn">✦ Travail</button>
           <button class="more-menu-item" id="batch-fetch-btn">✦ Compléter les données</button>
           <button class="more-menu-item" id="gbkey-btn">🔑 Clé Google Books</button>
+          <button class="more-menu-item" id="amz-help-btn">🔖 Ajouter depuis Amazon</button>
           <button class="more-menu-item" id="export-btn">↓ Exporter</button>
         </div>
       </div>
@@ -1006,6 +1020,10 @@ body.view-mode::after{content:'Mode lecture';position:fixed;bottom:0.8rem;right:
         <span class="preview-label">Aperçu couverture</span>
       </div>
       <div class="form-fields">
+        <div class="field-group amz-group"><label>Depuis Amazon</label>
+          <div class="isbn-row"><input type="text" id="f-amazon" inputmode="url" placeholder="Coller un lien Amazon…" autocomplete="off" spellcheck="false"><button type="button" class="scan-btn" id="amz-import-btn" title="Remplir la fiche à partir du lien Amazon">↓ Importer</button></div>
+          <div class="amz-warn" id="amz-warn"></div>
+        </div>
         <div class="field-group"><label>Titre *</label>
           <div class="lookup-wrap" id="title-wrap"><input type="text" id="f-title" placeholder="Le nom du livre" autocomplete="off"><button class="lookup-btn" id="lookup-btn" type="button">Rechercher</button></div>
           <div class="suggestions-box" id="suggestions-box"></div>
@@ -4418,6 +4436,8 @@ function closeModal(){document.getElementById('modal-overlay').classList.remove(
 // Escape pour fermer la modale ouverte
 document.addEventListener('keydown',e=>{
   if(e.key==='Escape'){
+    const ah=document.getElementById('amz-help-modal');
+    if(ah){ah.remove();return;}
     const mr=document.getElementById('mark-read-overlay');
     if(mr){mr.remove();return;}
     const cp=document.getElementById('cover-picker-overlay');
@@ -4583,6 +4603,7 @@ function openForm(){document.getElementById('form-overlay').classList.add('open'
   const _titleEl=document.getElementById('f-title');
   const _setStatus=txt=>{const s=document.getElementById('form-autofill-status');if(s)s.textContent=txt;};
   const _doAutofill=async()=>{
+    const _seq=window._amzSeq;
     const isbn=(_isbnEl?.value||'').replace(/[\s-]/g,'');
     const title=(_titleEl?.value||'').trim();
     if(!isbn&&title.length<3)return;
@@ -4592,6 +4613,7 @@ function openForm(){document.getElementById('form-overlay').classList.add('open'
     if(isbn){try{const r=await fetchTimeout('https://openlibrary.org/api/books?bibkeys=ISBN:'+isbn+'&jscmd=data&format=json');const d=await r.json();const info=d['ISBN:'+isbn];if(info){doc={title:info.title,authors:info.authors?.map(a=>a.name),publisher:info.publishers?.[0]?.name,pages:info.number_of_pages,cover:info.cover?.large||info.cover?.medium};}}catch(e){}}
     // Try Google Books
     if(!doc||(!doc.title&&!doc.authors)){try{const q=isbn?'isbn:'+isbn:'intitle:'+encodeURIComponent(title.slice(0,30));const r=await fetchTimeout(gbUrl('volumes?q='+q+'&maxResults=1'));const d=await r.json();const vi=d.items?.[0]?.volumeInfo;if(vi){doc={title:vi.title,authors:vi.authors,publisher:vi.publisher,pages:vi.pageCount,cover:vi.imageLinks?.thumbnail?.replace('http:','https:'),categories:vi.categories};}}catch(e){}}
+    if(_seq!==window._amzSeq)return;
     if(!doc){_setStatus('Aucun résultat trouvé.');return;}
     // Fill fields (only if empty)
     const _fv=(id,val)=>{const el=document.getElementById(id);if(el&&!el.value.trim()&&val)el.value=val;};
@@ -4601,13 +4623,14 @@ function openForm(){document.getElementById('form-overlay').classList.add('open'
     if(doc.publisher)_fv('f-pub',doc.publisher);
     if(doc.pages)_fv('f-total-pages',doc.pages);
     // Cover preview
-    if(doc.cover){const prev=document.getElementById('preview-cover');if(prev){const img=prev.querySelector('img');if(img){img.src=doc.cover;prev.style.display='block';}}}
+    if(doc.cover&&!window._amzCoverLock){const prev=document.getElementById('preview-cover');if(prev){const img=prev.querySelector('img');if(img){img.src=doc.cover;prev.style.display='block';}}}
     // Categories → genre
     const gSel=document.getElementById('f-genre');
     if(gSel&&!gSel.value&&doc.categories?.length){const cat=doc.categories[0].toLowerCase();const GMAP=[['roman','Roman étranger'],['fiction','Roman étranger'],['histoire','Histoire'],['philo','Philosophie'],['science','Sciences'],['biog','Biographie'],['essai','Essai'],['poésie','Poésie'],['fantasy','Fantasy/SF'],['sf','Fantasy/SF'],['théâtre','Théâtre'],['bd','BD']];const match=GMAP.find(([k])=>cat.includes(k));if(match)gSel.value=match[1];}
     _setStatus('✓ Informations remplies automatiquement');
     setTimeout(()=>_setStatus(''),3000);
   };
+  window._formAutofill=_doAutofill;
   if(!window._autofillBound){
     window._autofillBound=true;
     if(_isbnEl)_isbnEl.addEventListener('blur',_doAutofill);
@@ -4616,7 +4639,9 @@ function openForm(){document.getElementById('form-overlay').classList.add('open'
   const s=document.getElementById('f-status').value;document.getElementById('date-read-group').style.display=s==='read'?'flex':'none';}
 function closeForm(){document.getElementById('form-overlay').classList.remove('open');document.body.style.overflow='';resetForm();}
 function resetForm(){
-  ['f-title','f-author','f-isbn','f-pub','f-tags','f-date-read','f-comment','f-total-pages'].forEach(id=>{const el=document.getElementById(id);if(el)el.value='';});
+  window._amzCoverLock=false;window._amzSeq=(window._amzSeq||0)+1;
+  const _aw=document.getElementById('amz-warn');if(_aw){_aw.className='amz-warn';_aw.innerHTML='';}
+  ['f-amazon','f-title','f-author','f-isbn','f-pub','f-tags','f-date-read','f-comment','f-total-pages'].forEach(id=>{const el=document.getElementById(id);if(el)el.value='';});
   const _fgSel=document.getElementById('f-genre');if(_fgSel)_fgSel.value='';
   const _fStat=document.getElementById('form-autofill-status');if(_fStat)_fStat.textContent='';
   document.getElementById('pages-group').style.display='none';
@@ -5452,6 +5477,277 @@ if(!getToken()){
   // Masquer l'onglet Travail dans la nav
   document.querySelectorAll('[data-page="work"]').forEach(el=>el.style.display='none');
 }
+// ══ IMPORT DEPUIS AMAZON ═══════════════════════════════════════════════════
+// Une page Amazon n'est pas lisible depuis GitHub Pages (CORS + anti-robots),
+// mais son URL suffit : pour un livre papier, l'ASIN après /dp/ EST l'ISBN-10.
+// On le convertit en ISBN-13 et on laisse la cascade d'autofill existante faire
+// le reste. Le favori (amzScrape) lit en plus la page elle-même.
+function isbn10valid(s){
+  s=String(s||'').toUpperCase();
+  if(!/^\d{9}[\dX]$/.test(s))return false;
+  let sum=0;
+  for(let i=0;i<10;i++)sum+=(10-i)*(s[i]==='X'?10:parseInt(s[i],10));
+  return sum%11===0;
+}
+function isbn13valid(s){
+  s=String(s||'');
+  if(!/^97[89]\d{10}$/.test(s))return false;
+  let sum=0;
+  for(let i=0;i<13;i++)sum+=parseInt(s[i],10)*(i%2?3:1);
+  return sum%10===0;
+}
+function isbn10to13(s){
+  s=String(s||'').toUpperCase();
+  if(!isbn10valid(s))return null;
+  const core='978'+s.slice(0,9);
+  let sum=0;
+  for(let i=0;i<12;i++)sum+=parseInt(core[i],10)*(i%2?3:1);
+  return core+((10-sum%10)%10);
+}
+const AMZ_STOP=/^(amazon(\.[a-z.]+)?|amazon\.[a-z.]+ ?: ?.*|livres?|books?|b(ou)?tique kindle|kindle( store| edition)?|ebooks?( kindle)?|broch[ée]|poche|reli[ée]|d[ée]couvrez.*|achetez.*|check out.*|regarde.*)$/i;
+function parseAmazonInput(raw){
+  const out={ok:false,asin:'',isbn10:'',isbn13:'',title:'',author:'',query:'',kindle:false,short:false,reason:''};
+  const text=String(raw||'').trim();
+  if(!text){out.reason='empty';return out;}
+  // ISBN tapé ou scanné directement
+  const bare=text.replace(/[\s-]/g,'').toUpperCase();
+  if(isbn13valid(bare)){out.isbn13=bare;out.isbn10=isbn13to10(bare)||'';out.ok=true;return out;}
+  if(isbn10valid(bare)){out.isbn10=bare;out.isbn13=isbn10to13(bare);out.ok=true;return out;}
+  let m=text.match(/https?:\/\/[^\s<>"']+/i);
+  let urlStr=m?m[0]:'';
+  if(!urlStr){
+    const m2=text.match(/(?:^|\s)((?:www\.|smile\.)?amazon\.[a-z.]+\/[^\s<>"']*|amzn\.(?:eu|to|com|asia)\/[^\s<>"']*|a\.co\/[^\s<>"']*)/i);
+    if(m2){urlStr='https://'+m2[1];m={index:text.indexOf(m2[1])};}
+  }
+  if(!urlStr){out.reason='no-url';return out;}
+  // Texte de partage avant le lien (feuille de partage iOS/Android) :
+  // « Amazon.fr : La Horde du Contrevent : Damasio, Alain : Livres https://… »
+  const before=text.slice(0,m.index).replace(/["«»“”]/g,' ').replace(/^\s*(d[ée]couvrez|achetez|regarde|check out)\s+/i,'').trim();
+  if(before){
+    const segs=before.split(/\s*:\s+|\s+[-–—|]\s+/).map(s=>s.trim()).filter(s=>s&&!AMZ_STOP.test(s));
+    if(segs[0])out.title=segs[0].replace(/\s*[,;]\s*$/,'');
+    if(segs[1]&&segs[1].split(/\s+/).length<=6&&!/\d{4}/.test(segs[1]))out.author=normAuthor(_bnfAuthor(segs[1]));
+  }
+  let u;
+  try{u=new URL(urlStr.replace(/[).,;]+$/,''));}catch(e){out.reason='bad-url';return out;}
+  const host=u.hostname.toLowerCase();
+  const isShort=/(^|\.)amzn\.(eu|to|com|asia)$|^a\.co$/.test(host);
+  if(!isShort&&!/(^|\.)amazon\.[a-z.]+$/.test(host)){out.reason='not-amazon';return out;}
+  out.short=isShort;
+  let path=u.pathname;
+  try{path=decodeURIComponent(path);}catch(e){}
+  const am=path.match(/\/(?:dp|gp\/product|gp\/aw\/d|exec\/obidos\/ASIN|o\/ASIN|product)\/([A-Z0-9]{10})(?=[\/?#]|$)/i)
+    ||(!isShort?path.match(/\/d\/([A-Z0-9]{10})(?=[\/?#]|$)/i):null);
+  const asin=(am&&am[1].toUpperCase())||(u.searchParams.get('asin')||u.searchParams.get('ASIN')||'').toUpperCase();
+  if(asin&&/^[A-Z0-9]{10}$/.test(asin)){
+    out.asin=asin;
+    if(isbn10valid(asin)){out.isbn10=asin;out.isbn13=isbn10to13(asin);}
+    else if(/^B0/.test(asin))out.kindle=true;
+  }
+  // Le « slug » lisible devant /dp/ sert de requête de secours (sans accents, mêlé à l'auteur)
+  const slug=(path.split(/\/(?:dp|gp\/product)\//i)[0]||'').split('/').filter(Boolean).pop()||'';
+  if(slug&&/[a-z]/i.test(slug)&&slug.includes('-')&&!/^(gp|dp|s|b|stores)$/i.test(slug)){
+    out.query=slug.replace(/-/g,' ').replace(/\b(ebook|kindle|edition|[ée]dition|livre|poche|broch[ée]|reli[ée]|french|fr)\b/gi,' ').replace(/\s+/g,' ').trim();
+  }
+  out.ok=!!(out.isbn13||out.title||out.query);
+  if(!out.ok)out.reason=isShort?'short':(asin?'unknown-asin':'no-asin');
+  return out;
+}
+const _dupNorm=s=>String(s||'').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/\([^)]*\)/g,' ').replace(/[^a-z0-9]+/g,' ').trim();
+function findExistingBook(o){
+  o=o||{};
+  const i13=o.isbn13||'',i10=o.isbn10||(i13?(isbn13to10(i13)||''):'');
+  const re=x=>x?new RegExp('(^|[^0-9])'+x+'([^0-9X]|$)','i'):null;
+  const r13=re(i13),r10=re(i10);
+  const nt=_dupNorm(o.title);
+  return BOOKS.find(b=>{
+    const c=(b.c||'')+' '+(getCachedCover(b)||'');
+    if(r13&&r13.test(c))return true;
+    if(r10&&r10.test(c))return true;
+    return nt.length>3&&_dupNorm(b.t)===nt;
+  })||null;
+}
+function setFormCover(url){
+  const p=document.getElementById('preview-cover');if(!p)return;
+  p.innerHTML='';
+  const img=document.createElement('img');img.alt='';
+  img.style.cssText='width:100%;height:100%;object-fit:cover;display:block';
+  img.src=url;p.appendChild(img);
+}
+function _amzWarn(html,cls){
+  const w=document.getElementById('amz-warn');if(!w)return null;
+  w.className='amz-warn'+(html?' show':'')+(cls?' '+cls:'');
+  w.innerHTML=html||'';
+  return w;
+}
+const AMZ_REASONS={
+  'no-url':'Colle l\u2019adresse d\u2019une page Amazon (ou un ISBN).',
+  'bad-url':'Ce lien est illisible.',
+  'not-amazon':'Ce lien ne vient pas d\u2019Amazon.',
+  'short':'Lien court Amazon : ouvre-le dans ton navigateur et copie l\u2019adresse complète, ou utilise le favori Amazon (menu Plus).',
+  'no-asin':'Aucune référence produit trouvée dans ce lien.',
+  'unknown-asin':'Ce produit n\u2019a pas d\u2019ISBN : tape le titre ci-dessous pour lancer la recherche.'
+};
+async function importFromAmazon(raw,extra){
+  extra=extra||{};
+  const fo=document.getElementById('form-overlay');
+  if(fo&&!fo.classList.contains('open'))openForm();
+  // Nouvelle importation : on repart d'une fiche propre (note, statut et avis conservés)
+  ['f-title','f-author','f-isbn','f-pub','f-total-pages'].forEach(id=>{const el=document.getElementById(id);if(el)el.value='';});
+  const gs=document.getElementById('f-genre');if(gs)gs.value='';
+  const pc=document.getElementById('preview-cover');if(pc)pc.innerHTML='📖';
+  const sb=document.getElementById('suggestions-box');if(sb)sb.innerHTML='';
+  window._amzCoverLock=false;
+  const seq=window._amzSeq=(window._amzSeq||0)+1;
+  const alive=()=>seq===window._amzSeq;
+  const ai=document.getElementById('f-amazon');if(ai&&raw!=null)ai.value=String(raw);
+  _amzWarn('');
+  const p=parseAmazonInput(raw);
+  let i13=String(extra.isbn||'').replace(/[^\dXx]/g,'').toUpperCase();
+  if(i13.length===10)i13=isbn10to13(i13)||'';
+  if(!isbn13valid(i13))i13=p.isbn13||'';
+  const title=String(extra.t||p.title||'').trim();
+  if(!i13&&!title&&!p.query){
+    _amzWarn(esc(AMZ_REASONS[p.reason]||AMZ_REASONS['no-asin']));
+    return {status:'fail',reason:p.reason};
+  }
+  const set=(id,v)=>{const el=document.getElementById(id);if(el&&v&&!String(el.value).trim())el.value=String(v).trim();};
+  set('f-title',title);
+  set('f-author',normAuthor(extra.a||p.author||''));
+  set('f-pub',extra.pub);
+  const pg=parseInt(extra.pg,10);if(pg>0&&pg<20000)set('f-total-pages',pg);
+  if(title)document.getElementById('title-wrap')?.classList.add('has-val');
+  // Couverture : celle du favori (haute déf.) > Amazon par ISBN > Open Library
+  const coverP=(async()=>{
+    const cands=[];
+    if(/^https:\/\//i.test(extra.c||''))cands.push(extra.c);
+    if(i13){cands.push(amazonCoverUrl(i13));cands.push('https://covers.openlibrary.org/b/isbn/'+i13+'-L.jpg');}
+    for(const u of cands){
+      if(!u)continue;
+      const ok=await chkImg(u);
+      if(!alive())return;
+      if(ok){setFormCover(u);window._amzCoverLock=true;return;}
+    }
+  })();
+  let status='ok';
+  if(i13){
+    set('f-isbn',i13);
+    if(typeof window._formAutofill==='function'){
+      try{await window._formAutofill();}catch(e){}
+    }
+  }else{
+    status='search';
+    const q=title||p.query;
+    _amzWarn(esc(p.kindle?'Édition Kindle, sans ISBN : choisis l\u2019édition papier dans les suggestions.':'Pas d\u2019ISBN dans ce lien : choisis la bonne édition dans les suggestions.'),'info');
+    if(q)try{await searchOL(q);}catch(e){}
+  }
+  await coverP;
+  if(!alive())return {status:'stale'};
+  const dupe=findExistingBook({isbn13:document.getElementById('f-isbn').value.replace(/[^\dX]/gi,'')||i13,title:document.getElementById('f-title').value});
+  if(dupe){
+    const w=_amzWarn('⚠ Déjà dans ta bibliothèque : « '+esc(dupe.t)+' » ('+esc(STATUS_LABELS[dupe.s]||dupe.s)+') — <a id="amz-dupe-open">voir la fiche</a>');
+    w&&w.querySelector('#amz-dupe-open')?.addEventListener('click',()=>{closeForm();openModal(dupe);});
+    status='duplicate';
+  }
+  if(status==='ok')showToast('✓ Fiche remplie depuis Amazon');
+  addLog('cover','↓ Import Amazon — '+(document.getElementById('f-title').value||title||p.query).slice(0,50),i13?'ISBN '+i13:(p.asin?'ASIN '+p.asin:'sans ISBN'));
+  return {status:status,isbn13:i13,dupe:dupe};
+}
+
+// Favori à glisser dans la barre : lit la page Amazon ouverte et ouvre
+// la bibliothèque avec la fiche pré-remplie. Fonction autonome (aucune
+// référence extérieure) : sa source sert telle quelle de bookmarklet.
+function amzScrape(app,d,w){
+  d=d||document;w=w||window;
+  var host=(d.location&&d.location.hostname)||'';
+  if(!/amazon\./i.test(host)){w.alert('Ouvre d\u2019abord la page d\u2019un livre sur Amazon.');return null;}
+  var q=function(s){var e=d.querySelector(s);return e?(e.textContent||'').replace(/\s+/g,' ').trim():'';};
+  var t=q('#productTitle')||q('#ebooksProductTitle');
+  var names=[];
+  [].slice.call(d.querySelectorAll('#bylineInfo .author a')).forEach(function(e){
+    var n=(e.textContent||'').replace(/\s+/g,' ').trim();
+    if(n&&!/^(Voir|See|Plus|More|Visit|Visiter|Suivre|Follow)\b/i.test(n)&&names.indexOf(n)<0)names.push(n);
+  });
+  var a=names.slice(0,2).join(', ');
+  var blk=['#rich_product_information','#detailBullets_feature_div','#detailBulletsWrapper_feature_div','#productDetails_feature_div','#bookDetails_feature_div'].map(q).join(' ');
+  var sep='[\\s:\\u200e\\u200f\\u00a0]*';
+  var isbn=((blk.match(new RegExp('ISBN-13'+sep+'(97[89][\\d-]{10,14})','i'))||[])[1]||'').replace(/-/g,'');
+  if(!isbn){isbn=(blk.match(new RegExp('ISBN-10'+sep+'([\\dX]{10})','i'))||[])[1]||'';}
+  var pg=(blk.match(/(\d{2,5})\s*pages/i)||[])[1]||'';
+  var pub=((blk.match(new RegExp('(?:\u00c9diteur|Editeur|Publisher)'+sep+'(.+?)(?:\\s*[(;\\u200e]|\\s+(?:Date|Langue|Language|ISBN|Broch|Reli|Poche|Nombre|Print|Dimensions)|$)','i'))||[])[1]||'').trim();
+  var im=d.querySelector('#landingImage,#imgBlkFront,#ebooksImgBlkFront,#main-image');
+  var c=im?(im.getAttribute('data-old-hires')||im.getAttribute('src')||''):'';
+  if(!/^https:\/\//.test(c))c='';
+  c=c.replace(/\._[^\/]*_\.(jpg|jpeg|png)$/i,'.$1');
+  var p=['add='+encodeURIComponent(String(d.location.href).split('?')[0].split('#')[0])];
+  [['t',t],['a',a],['isbn',isbn],['pub',pub],['pg',pg],['c',c]].forEach(function(kv){if(kv[1])p.push(kv[0]+'='+encodeURIComponent(kv[1]));});
+  var url=app+'?'+p.join('&');
+  var win=w.open(url,'_blank');
+  if(!win)w.location.href=url;
+  return url;
+}
+function appBaseUrl(){return location.origin+location.pathname;}
+function amazonBookmarkletHref(){
+  return 'javascript:('+amzScrape.toString().replace(/\n\s*/g,' ')+')('+JSON.stringify(appBaseUrl())+');void 0';
+}
+function openAmazonHelp(){
+  document.getElementById('amz-help-modal')?.remove();
+  const base=appBaseUrl()+'?add=';
+  const ov=document.createElement('div');ov.id='amz-help-modal';ov.className='suggestion-popup';
+  ov.innerHTML='<div class="suggestion-box" style="max-width:470px">'
+    +'<div class="suggestion-box-header"><h3>Ajouter depuis Amazon</h3><p>Trois façons, selon l\u2019appareil</p></div>'
+    +'<div class="amz-help" style="padding:1rem 1.2rem;max-height:70vh;overflow-y:auto">'
+    +'<h4>Partout : coller le lien</h4>'
+    +'<ol><li>Copie l\u2019adresse de la page du livre sur Amazon.</li><li>« + Ajouter », puis colle-la dans le champ « Depuis Amazon » : la fiche se remplit seule.</li></ol>'
+    +'<h4>Sur Mac : le favori</h4>'
+    +'<ol><li>Glisse ce bouton dans ta barre de favoris : <a class="amz-bm" id="amz-bm-link">📚 → Bibliothèque</a></li>'
+    +'<li>Sur la page d\u2019un livre Amazon, clique dessus : ta bibliothèque s\u2019ouvre avec titre, auteur, éditeur, pages et couverture HD.</li></ol>'
+    +'<h4>Sur iPhone : un raccourci dans « Partager »</h4>'
+    +'<ol><li>App Raccourcis → nouveau raccourci → réglages (ⓘ) → activer « Afficher dans la feuille de partage », types : URL et Texte.</li>'
+    +'<li>Action « Encoder l\u2019URL » (mode Encoder) sur l\u2019Entrée du raccourci.</li>'
+    +'<li>Action « Ouvrir les URL » avec ce début, suivi du texte encodé :<div class="amz-code"><code id="amz-base">'+esc(base)+'</code><button class="scan-btn" id="amz-copy">Copier</button></div></li>'
+    +'<li>Dans l\u2019app Amazon : Partager → ton raccourci.</li></ol>'
+    +'</div>'
+    +'<div class="suggestion-box-footer" style="justify-content:flex-end"><button class="btn-submit" id="amz-help-close">Fermer</button></div>'
+    +'</div>';
+  document.body.appendChild(ov);
+  const bm=ov.querySelector('#amz-bm-link');
+  bm.href=amazonBookmarkletHref();
+  bm.addEventListener('click',e=>{e.preventDefault();showToast('Glisse-le dans ta barre de favoris');});
+  ov.querySelector('#amz-copy').addEventListener('click',()=>{
+    const done=()=>showToast('✓ Adresse copiée');
+    if(navigator.clipboard&&navigator.clipboard.writeText)navigator.clipboard.writeText(base).then(done,()=>showToast('Copie impossible — sélectionne le texte','warn'));
+    else showToast('Copie impossible — sélectionne le texte','warn');
+  });
+  ov.querySelector('#amz-help-close').addEventListener('click',()=>ov.remove());
+  ov.addEventListener('click',e=>{if(e.target===ov)ov.remove();});
+}
+(function(){
+  const inp=document.getElementById('f-amazon');
+  const btn=document.getElementById('amz-import-btn');
+  if(inp){
+    inp.addEventListener('paste',()=>setTimeout(()=>{if(inp.value.trim())importFromAmazon(inp.value);},0));
+    inp.addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();importFromAmazon(inp.value);}});
+  }
+  if(btn)btn.addEventListener('click',()=>importFromAmazon(inp?inp.value:''));
+  document.getElementById('amz-help-btn')?.addEventListener('click',()=>{
+    const mm=document.getElementById('more-menu');if(mm)mm.style.display='none';
+    setTimeout(openAmazonHelp,50);
+  });
+})();
+// ?add=<lien Amazon> (raccourci iOS, favori, partage) : ouvre la fiche pré-remplie
+function handleAddParam(){
+  let q;try{q=new URLSearchParams(location.search);}catch(e){return false;}
+  const raw=q.get('add')||q.get('url')||q.get('text')||'';
+  const extra={t:q.get('t')||'',a:q.get('a')||'',isbn:q.get('isbn')||'',pub:q.get('pub')||'',pg:q.get('pg')||'',c:q.get('c')||''};
+  if(!raw&&!extra.t&&!extra.isbn)return false;
+  try{history.replaceState(null,'',location.pathname);}catch(e){}
+  window._skipSetupPrompt=true; // ne pas recouvrir la fiche par la demande de token
+  setTimeout(()=>importFromAmazon(raw,extra),300);
+  return true;
+}
+handleAddParam();
+
 buildStats();render();updateSyncBtn();
   // Sync API: fetch GitHub direct pour contourner le cache CDN
   if(localStorage.getItem('gh_token')){
@@ -5522,7 +5818,7 @@ buildStats();render();updateSyncBtn();
   // If loaded with cache-bust param, clean the URL silently
 if(location.search.startsWith('?v=')) history.replaceState(null,'',location.pathname);
 
-if(!getToken()&&!localStorage.getItem('setup_dismissed')){setTimeout(()=>openSetup(),1200);}
+if(!getToken()&&!localStorage.getItem('setup_dismissed')&&!window._skipSetupPrompt){setTimeout(()=>openSetup(),1200);}
 
 // ── VERSION CHECK — détecte quand une autre appareil a mis à jour ──
 document.getElementById('update-reload-btn').addEventListener('click',()=>{
