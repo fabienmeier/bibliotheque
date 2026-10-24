@@ -1088,7 +1088,7 @@ const SYNC_DATA={"progress":{"Le hobbit||J.R.R. Tolkien":{"pages_read":292,"tota
 const PAGE_VERSION='2026-10-24T20:51:38.502Z'; // mis à jour à chaque push GitHub
 const STATUS_LABELS={'read':'Lu','to-read':'À lire','did-not-finish':'Abandonné','currently-reading':'En cours'};
 let currentPubFilter=null;
-const GH_REPO='gargouille88/bibliotheque',GH_FILE='index.html',TOKEN_KEY='gh_token';
+const GH_REPO='fabienmeier/bibliotheque',GH_FILE='index.html',TOKEN_KEY='gh_token';
 const LS_LOG='biblio_log';const LOG_MAX=300;
 const LS_PRIORITY='biblio_priority';
 const LS_FAVORITES='biblio_favorites';
@@ -5924,7 +5924,7 @@ buildStats();render();updateSyncBtn();
   if(localStorage.getItem('gh_token')){
     (function(){
       var tk=localStorage.getItem('gh_token');
-      fetch('https://api.github.com/repos/gargouille88/bibliotheque/contents/index.html',{
+      fetch('https://api.github.com/repos/'+GH_REPO+'/contents/'+GH_FILE,{
         headers:{'Authorization':'token '+tk,'Accept':'application/vnd.github.v3+json'},
         cache:'no-store'
       }).then(function(r){return r.json();}).then(function(d){
