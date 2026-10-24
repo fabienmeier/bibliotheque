@@ -1127,6 +1127,15 @@ function borrowLabel(v){
   if(n===1)return 'à rendre demain';
   return 'à rendre · J-'+n;
 }
+// Catalogue du réseau TILT (Syracuse) : titre sans sous-titre + nom de l'auteur
+// (pas d'ISBN : la médiathèque a souvent une autre édition que la nôtre)
+const TILT_BASE='https://biblio-tilt.agglo-haguenau.fr';
+function tiltSearchUrl(book){
+  const t=String(book.t||'').split(/\s[:–—-]\s|:/)[0].replace(/\s*\(.*?\)\s*/g,' ').trim();
+  const a=String(book.a||'');const last=/inconnu/i.test(a)?'':a.split(/\s+/).pop();
+  const q=(t+' '+last).replace(/\s+/g,' ').trim();
+  return TILT_BASE+'/search.aspx?SC=DEFAULT&QUERY='+encodeURIComponent(q)+'&QUERY_LABEL=';
+}
 function borrowDay(ts){return new Date(ts).toLocaleDateString('fr-FR',{day:'numeric',month:'short'});}
 function lastLibrary(){
   const all=Object.values(loadBorrowed()).filter(v=>borrowEver(v)&&v.lib).sort((a,b)=>(b.since||0)-(a.since||0));
@@ -3724,6 +3733,13 @@ function openModal(book){
     const bb=document.createElement('button');bb.className='maction-btn maction-borrow';
     bb.textContent=_bEver?'🏛 Réemprunter':'🏛 Emprunté à la médiathèque';
     bb.addEventListener('click',()=>{closeModal();showBorrowDialog(book,false);});actions.appendChild(bb);
+  }
+  if(book.s==='to-read'&&!_bActive){
+    const tl=document.createElement('a');tl.className='maction-btn maction-borrow';
+    tl.href=tiltSearchUrl(book);tl.target='_blank';tl.rel='noopener';
+    tl.style.textDecoration='none';tl.style.display='inline-flex';tl.style.alignItems='center';
+    tl.textContent='🔎 Chercher sur TILT';tl.title='Rechercher ce livre dans le catalogue du réseau TILT';
+    actions.appendChild(tl);
   }
   // #3: Priority button
   if(book.s==='to-read'){
