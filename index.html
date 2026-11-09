@@ -1093,6 +1093,15 @@ const LS_LOG='biblio_log';const LOG_MAX=300;
 const LS_PRIORITY='biblio_priority';
 const LS_FAVORITES='biblio_favorites';
 const LS_CUSTOM='biblio_custom',LS_LENT='biblio_lent',LS_COMMENTS='biblio_comments',LS_LASTUPDATE='biblio_lastupdate',LS_PROGRESS='biblio_progress',LS_PAGES='biblio_pages',LS_COVERS='biblio_covers';
+// Les lectures d'avant 2014 sont trop clairsemées (1 à 6 livres par an) : les
+// statistiques les regroupent dans une seule tranche « Avant 2014 ».
+const OLD_YEAR_CUT=2014,OLD_YEAR_KEY='<'+OLD_YEAR_CUT;
+function yearKey(y){const s=String(y||'');return /^\d{4}$/.test(s)&&+s<OLD_YEAR_CUT?OLD_YEAR_KEY:s;}
+function yearLabel(k){return k===OLD_YEAR_KEY?'Avant '+OLD_YEAR_CUT:String(k);}
+function yearShort(k){return k===OLD_YEAR_KEY?'<’'+String(OLD_YEAR_CUT).slice(2):'’'+String(k).slice(2);}
+function yearIn(k){return k===OLD_YEAR_KEY?'avant '+OLD_YEAR_CUT:'en '+k;}
+function yearSort(a,b){const n=k=>k===OLD_YEAR_KEY?0:+k;return n(a)-n(b);}
+function yearMatch(y,sel){return !sel||String(y||'')===String(sel)||(sel===OLD_YEAR_KEY&&yearKey(y)===OLD_YEAR_KEY);}
 let currentFilter='all',currentSearch='',currentYear='',currentSort='default',currentTag='',currentView='grid';
 let currentModalBook=null;
 
@@ -1822,7 +1831,7 @@ function _suggest(pool){
   let p=pool;
   if(currentTag) p=p.filter(b=>(b.g||'').toLowerCase().includes(currentTag.toLowerCase()));
   if(!p.length) p=pool;
-  if(currentYear) p=p.filter(b=>!b.y||b.y===currentYear.toString());
+  if(currentYear) p=p.filter(b=>!b.y||yearMatch(b.y,currentYear));
   if(!p.length) p=pool;
   const book=p[Math.floor(Math.random()*p.length)];
   openModal(book);
@@ -2354,7 +2363,7 @@ function render(){
       :currentFilter==='owned'?(b.s==='to-read'&&b.own===true)
       :currentFilter==='tobuy'?(b.s==='to-read'&&!b.own)
       :b.s===currentFilter));
-    const mY=!currentYear||b.y===currentYear;
+    const mY=yearMatch(b.y,currentYear);
     const mT=!currentTag||(b.g||'').toLowerCase().includes(currentTag.toLowerCase());
     const mR=!b.r?true:(parseFloat(b.r)>=advMin&&parseFloat(b.r)<=advMax);
     const mFmt=!advFormat||b.f===advFormat;
@@ -2466,10 +2475,11 @@ function buildStatsPage(){
   // ── Scope (filtre d'année global de la page stats) ────────────────────────
   window._stScope=window._stScope||'all';
   const allRead=BOOKS.filter(b=>b.s==='read');
-  const allYears=[...new Set(allRead.filter(b=>b.y).map(b=>String(b.y)))].sort();
+  const allYears=[...new Set(allRead.filter(b=>b.y).map(b=>yearKey(b.y)))].sort(yearSort);
   if(window._stScope!=='all'&&!allYears.includes(window._stScope))window._stScope='all';
   const SCOPE=window._stScope;
-  const inScope=b=>SCOPE==='all'||String(b.y||'')===SCOPE;
+  const inScope=b=>SCOPE==='all'||yearKey(b.y)===SCOPE;
+  const SCOPE_OLD=SCOPE===OLD_YEAR_KEY;
 
   // ── Data prep ─────────────────────────────────────────────────────────────
   const CY=new Date().getFullYear();
@@ -2511,8 +2521,9 @@ function buildStatsPage(){
   }
   const PG=pagesStats(read);
   const totalPg=PG.estimated;
-  const byYear={};allRead.filter(b=>b.y).forEach(b=>{byYear[b.y]=(byYear[b.y]||0)+1;});
-  const bestYear=allYears.length?allYears.reduce((b,y)=>byYear[y]>byYear[b]?y:b,allYears[0]):null;
+  const byYear={};allRead.filter(b=>b.y).forEach(b=>{const k=yearKey(b.y);byYear[k]=(byYear[k]||0)+1;});
+  const _realYears=allYears.filter(y=>y!==OLD_YEAR_KEY);
+  const bestYear=_realYears.length?_realYears.reduce((b,y)=>byYear[y]>byYear[b]?y:b,_realYears[0]):null;
   const ac={};read.forEach(b=>{if(b.a){const a=b.a.split(',')[0].trim();ac[a]=(ac[a]||0)+1;}});
   const topAuth=Object.entries(ac).sort((a,b)=>b[1]-a[1]).slice(0,10);
   const gc={};read.filter(b=>b.g&&b.g.trim()).forEach(b=>{const g=b.g.trim();gc[g]=(gc[g]||0)+1;});
@@ -2525,8 +2536,8 @@ function buildStatsPage(){
   const NS='http://www.w3.org/2000/svg';
   const starStr=r=>{let s='';for(let i=1;i<=5;i++){s+=r>=i-0.25?'★':r>=i-0.75?'½':'☆';}return s;};
   const goLib=()=>{document.querySelector('[data-page="library"]')?.click();};
-  const filterGenre=(g,y)=>{currentTag=g;currentYear=y||'';const ys=document.getElementById('year-select');if(ys)ys.value=currentYear;goLib();render();showToast('Filtre : '+g+(y?' · '+y:''));};
-  const filterYear=y=>{currentYear=String(y);const ys=document.getElementById('year-select');if(ys)ys.value=currentYear;goLib();render();showToast('Lectures '+y);};
+  const filterGenre=(g,y)=>{currentTag=g;currentYear=y||'';const ys=document.getElementById('year-select');if(ys)ys.value=currentYear;goLib();render();showToast('Filtre : '+g+(y?' · '+yearLabel(y):''));};
+  const filterYear=y=>{currentYear=String(y);const ys=document.getElementById('year-select');if(ys)ys.value=currentYear;goLib();render();showToast('Lectures '+yearIn(y));};
 
   const wrap=document.createElement('div');wrap.className='st-wrap';
 
@@ -2542,7 +2553,7 @@ function buildStatsPage(){
     const mast=document.createElement('div');mast.className='st-mast';
     const left=document.createElement('div');
     const eyebrow=document.createElement('div');eyebrow.className='st-eyebrow';
-    eyebrow.textContent=SCOPE==='all'?'Statistiques · toute la bibliothèque':'Statistiques · lectures '+SCOPE;
+    eyebrow.textContent=SCOPE==='all'?'Statistiques · toute la bibliothèque':'Statistiques · lectures '+yearIn(SCOPE);
     const num=document.createElement('div');num.className='st-hero-num';
     num.innerHTML=fmtN(read.length)+' <em>livre'+(read.length>1?'s lus':' lu')+'</em>';
     const sub=document.createElement('div');sub.className='st-hero-sub';
@@ -2560,10 +2571,10 @@ function buildStatsPage(){
       b.addEventListener('click',()=>{window._stScope=val;buildStatsPage();});
       return b;};
     scope.appendChild(mkBtn('Tout','all'));
-    allYears.forEach(y=>scope.appendChild(mkBtn(y,y)));
+    allYears.forEach(y=>scope.appendChild(mkBtn(yearLabel(y),y)));
     right.appendChild(scope);
     // Carte annuelle
-    const cardTarget=SCOPE!=='all'?SCOPE:(allYears.includes(String(CY))?String(CY):allYears[allYears.length-1]);
+    const cardTarget=SCOPE_OLD?null:SCOPE!=='all'?SCOPE:(allYears.includes(String(CY))?String(CY):allYears[allYears.length-1]);
     if(cardTarget){
       const btnRow=document.createElement('div');btnRow.style.cssText='display:flex;justify-content:flex-end;margin-top:0.7rem';
       const btn=document.createElement('button');btn.className='action-btn';
@@ -2602,16 +2613,16 @@ function buildStatsPage(){
          t:'Livres que vous avez marqués d\u2019un cœur depuis leur fiche — indépendant de la note.'},
         {l:'Notés 5 ★',v:fmtN(five.length),s:withR.length?((five.length/withR.length)*100).toFixed(0)+'% des notés':'',
          t:'Livres auxquels vous avez mis la note maximale.'+(coups.length?' '+fmtN(coups.filter(b=>parseFloat(b.r)===5).length)+' sont aussi des coups de cœur.':'')}]
-      :[{l:'Lus en '+SCOPE,v:fmtN(read.length),s:bestYear===SCOPE?'record absolu':''},
+      :[{l:'Lus '+yearIn(SCOPE),v:fmtN(read.length),s:bestYear===SCOPE?'record absolu':''},
         {l:'Pages',v:(PG.pct<100?'≈ ':'')+fmtN(PG.estimated),
-         s:PG.estimated?(PG.pct<100?fmtN(PG.counted)+' comptées · ':'')+Math.round(PG.estimated/365)+' p./jour':'',
-         t:PG.pct<100?PG.pct+'% des livres de '+SCOPE+' ont une pagination renseignée ; les autres sont estimés par genre.':''},
+         s:PG.estimated?(PG.pct<100?fmtN(PG.counted)+' comptées'+(SCOPE_OLD?'':' · '):'')+(SCOPE_OLD?'':Math.round(PG.estimated/365)+' p./jour'):'',
+         t:PG.pct<100?PG.pct+'% des livres lus '+yearIn(SCOPE)+' ont une pagination renseignée ; les autres sont estimés par genre.':''},
         {l:'Note moyenne',v:avgR?avgR.toFixed(2).replace('.',','):'—',s:withR.length+' notés'},
         {l:'Coups de cœur',v:fmtN(coups.length),s:'marqués ♥ à la main'},
         {l:'Notés 5 ★',v:fmtN(five.length),s:withR.length?((five.length/withR.length)*100).toFixed(0)+'% des notés':''},
         {l:'Auteurs',v:fmtN(authN),s:'différents'},
         {l:'Genres',v:fmtN(pieData.length),s:'explorés'},
-        {l:'Vs année préc.',v:(function(){const i=allYears.indexOf(SCOPE);if(i<1)return '—';const d=read.length-(byYear[allYears[i-1]]||0);return (d>=0?'+':'')+d;})(),s:(function(){const i=allYears.indexOf(SCOPE);return i>=1?allYears[i-1]+' : '+(byYear[allYears[i-1]]||0)+' livres':'';})()}];
+        {l:'Vs année préc.',v:(function(){const i=allYears.indexOf(SCOPE);if(i<1||allYears[i-1]===OLD_YEAR_KEY)return '—';const d=read.length-(byYear[allYears[i-1]]||0);return (d>=0?'+':'')+d;})(),s:(function(){const i=allYears.indexOf(SCOPE);return i>=1&&allYears[i-1]!==OLD_YEAR_KEY?allYears[i-1]+' : '+(byYear[allYears[i-1]]||0)+' livres':'';})()}];
     kpis.forEach(({l,v,s,t})=>{
       const c=document.createElement('div');c.className='st-kpi';
       c.innerHTML='<i>'+esc(l)+'</i><b>'+v+'</b><span>'+esc(s||'')+'</span>';
@@ -2736,10 +2747,10 @@ function buildStatsPage(){
   // ══ 4. Trajectoire : livres + pages par année ═════════════════════════════
   if(allYears.length>1){
     const sec=mkSec('Trajectoire de lecture','cliquer une année pour voir ces lectures');
-    const pgByYear={};allYears.forEach(y=>{pgByYear[y]=pagesStats(allRead.filter(b=>String(b.y||'')===y)).estimated;});
+    const pgByYear={};allYears.forEach(y=>{pgByYear[y]=pagesStats(allRead.filter(b=>yearKey(b.y)===y)).estimated;});
     const maxYear=Math.max(...allYears.map(y=>byYear[y]||0),1);
     const maxPgY=Math.max(...allYears.map(y=>pgByYear[y]||0),1);
-    const mean=allYears.reduce((s,y)=>s+(byYear[y]||0),0)/allYears.length;
+    const mean=(_realYears.length?_realYears:allYears).reduce((s,y)=>s+(byYear[y]||0),0)/((_realYears.length?_realYears:allYears).length);
     const svgW=Math.max(560,allYears.length*58);const svgH=190;
     const pL=34,pB=30,pT=16;const cH=svgH-pB-pT;
     const svg=document.createElementNS(NS,'svg');
@@ -2762,10 +2773,10 @@ function buildStatsPage(){
       rect.setAttribute('width',bW.toFixed(1));rect.setAttribute('height',bH.toFixed(1));
       const isSel=SCOPE===y;const isBest=y===bestYear;
       rect.setAttribute('fill',isSel||isBest?'var(--accent)':'var(--ink)');
-      rect.setAttribute('opacity',isSel?'1':isBest?'0.9':'0.55');rect.setAttribute('rx','1');
+      rect.setAttribute('opacity',isSel?'1':isBest?'0.9':y===OLD_YEAR_KEY?'0.3':'0.55');rect.setAttribute('rx','1');
       rect.style.cursor='pointer';
       const pg=pgByYear[y];
-      tipOn(rect,()=>'<strong>'+y+'</strong><br>'+n+' livre'+(n>1?'s':'')+(pg?'<br>≈ '+fmtN(pg)+' pages':'')+(isBest?'<br>🏆 meilleure année':'')+'<br><em>Cliquer pour filtrer</em>');
+      tipOn(rect,()=>'<strong>'+yearLabel(y)+'</strong><br>'+(y===OLD_YEAR_KEY?'regroupe '+allRead.filter(b=>yearKey(b.y)===y).map(b=>String(b.y)).sort().filter((v,i,a)=>i===0||v!==a[i-1]).length+' années · ':'')+n+' livre'+(n>1?'s':'')+(pg?'<br>≈ '+fmtN(pg)+' pages':'')+(isBest?'<br>🏆 meilleure année':'')+'<br><em>Cliquer pour filtrer</em>');
       rect.addEventListener('click',()=>filterYear(y));
       svg.appendChild(rect);
       const cnt=document.createElementNS(NS,'text');cnt.setAttribute('x',xC(i).toFixed(1));cnt.setAttribute('y',(yp-5).toFixed(1));
@@ -2774,7 +2785,7 @@ function buildStatsPage(){
       lbl.setAttribute('text-anchor','middle');lbl.setAttribute('font-size','9');
       lbl.setAttribute('fill',isSel?'var(--accent)':'var(--ink3)');
       if(isSel)lbl.setAttribute('font-weight','700');
-      lbl.textContent=y;svg.appendChild(lbl);
+      lbl.textContent=y===OLD_YEAR_KEY?'< '+OLD_YEAR_CUT:y;svg.appendChild(lbl);
     });
     // ligne pages superposée
     const hasPg=allYears.some(y=>pgByYear[y]);
@@ -2788,7 +2799,7 @@ function buildStatsPage(){
         const ci=document.createElementNS(NS,'circle');
         ci.setAttribute('cx',p.x.toFixed(1));ci.setAttribute('cy',p.y.toFixed(1));ci.setAttribute('r','2.6');
         ci.setAttribute('fill','var(--bg)');ci.setAttribute('stroke','var(--ink3)');ci.setAttribute('stroke-width','1.2');
-        tipOn(ci,()=>'<strong>'+p.yr+'</strong><br>≈ '+fmtN(p.n)+' pages');
+        tipOn(ci,()=>'<strong>'+yearLabel(p.yr)+'</strong><br>≈ '+fmtN(p.n)+' pages');
         svg.appendChild(ci);
       });
     }
@@ -2815,7 +2826,7 @@ function buildStatsPage(){
     if(!readY.length||allYears.length<2)return;
     const gTot={};readY.forEach(b=>{const g=b.g.trim();gTot[g]=(gTot[g]||0)+1;});
     const gens=Object.entries(gTot).sort((a,b)=>b[1]-a[1]).slice(0,10).map(e=>e[0]);
-    const M={};readY.forEach(b=>{const g=b.g.trim();if(!gens.includes(g))return;const k=g+'|'+b.y;M[k]=(M[k]||0)+1;});
+    const M={};readY.forEach(b=>{const g=b.g.trim();if(!gens.includes(g))return;const k=g+'|'+yearKey(b.y);M[k]=(M[k]||0)+1;});
     const maxCell=Math.max(...Object.values(M),1);
     const sec=mkSec('Tapisserie des genres','intensité = nombre de livres lus · cliquer une case pour explorer');
     const scroller=document.createElement('div');scroller.style.cssText='overflow-x:auto';
@@ -2825,7 +2836,7 @@ function buildStatsPage(){
     grid.appendChild(document.createElement('div'));
     allYears.forEach(y=>{
       const h=document.createElement('div');h.className='hyr';
-      h.textContent="’"+String(y).slice(2);
+      h.textContent=yearShort(y);if(y===OLD_YEAR_KEY)h.title=yearLabel(y);
       if(SCOPE===y){h.style.color='var(--accent)';h.style.fontWeight='700';}
       grid.appendChild(h);
     });
@@ -2838,10 +2849,10 @@ function buildStatsPage(){
         if(n>0){
           const t=0.15+0.85*(n/maxCell);
           c.style.background='var(--accent)';c.style.opacity=t.toFixed(2);
-          tipOn(c,()=>'<strong>'+g+' · '+y+'</strong><br>'+n+' livre'+(n>1?'s':'')+'<br><em>Cliquer pour filtrer</em>');
+          tipOn(c,()=>'<strong>'+g+' · '+yearLabel(y)+'</strong><br>'+n+' livre'+(n>1?'s':'')+'<br><em>Cliquer pour filtrer</em>');
           c.addEventListener('click',()=>filterGenre(g,y));
         }else{
-          tipOn(c,()=>'<strong>'+g+' · '+y+'</strong><br>aucun livre');
+          tipOn(c,()=>'<strong>'+g+' · '+yearLabel(y)+'</strong><br>aucun livre');
         }
         grid.appendChild(c);
       });
@@ -2852,7 +2863,7 @@ function buildStatsPage(){
 
   // ══ 5bis. L'année en couvertures (une année à la fois) ════════════════════
   (function(){
-    const years=[...allYears].sort((a,b)=>b.localeCompare(a));
+    const years=[...allYears].sort(yearSort).reverse();
     if(!years.length)return;
     // Portée figée sur une année → on la suit ; sinon mémoire de session, à défaut la plus récente.
     let cy=SCOPE!=='all'?SCOPE:(years.indexOf(window._cwYear||'')>-1?window._cwYear:years[0]);
@@ -2864,13 +2875,13 @@ function buildStatsPage(){
     const prev=document.createElement('button');prev.type='button';prev.className='st-cw-nav';prev.textContent='‹';prev.title='Année précédente';
     const next=document.createElement('button');next.type='button';next.className='st-cw-nav';next.textContent='›';next.title='Année suivante';
     const sel=document.createElement('select');sel.className='st-cw-sel';sel.setAttribute('aria-label','Année à afficher');
-    years.forEach(y=>{const o=document.createElement('option');o.value=y;o.textContent=y;sel.appendChild(o);});
+    years.forEach(y=>{const o=document.createElement('option');o.value=y;o.textContent=yearLabel(y);sel.appendChild(o);});
     sel.value=cy;
     const meta=document.createElement('span');meta.className='st-cw-meta';
     const exp=document.createElement('button');exp.type='button';exp.className='st-cw-exp';exp.textContent='↓ Carte';
     bar.appendChild(prev);bar.appendChild(sel);bar.appendChild(next);bar.appendChild(meta);bar.appendChild(exp);
 
-    if(SCOPE!=='all'){prev.style.display=next.style.display='none';sel.disabled=true;sel.title='Portée de la page fixée sur '+SCOPE;}
+    if(SCOPE!=='all'){prev.style.display=next.style.display='none';sel.disabled=true;sel.title='Portée de la page fixée sur '+yearLabel(SCOPE);}
 
     const body=document.createElement('div');body.className='st-cw-body';
 
@@ -2892,19 +2903,19 @@ function buildStatsPage(){
       window._cwYear=cy;sel.value=cy;
       const i=years.indexOf(cy);
       prev.disabled=i>=years.length-1;next.disabled=i<=0;
-      const yb=allRead.filter(b=>String(b.y||'')===cy);
+      const yb=allRead.filter(b=>yearKey(b.y)===cy);
       const g5=yb.filter(b=>parseFloat(b.r)===5).length;
       const pg=yb.reduce((s,b)=>s+(getBookPages(b)||0),0);
       const bits=[yb.length+' livre'+(yb.length>1?'s':'')];
       if(g5)bits.push(g5+' coup'+(g5>1?'s':'')+' de cœur');
       if(pg)bits.push(fmtN(pg)+' pages');
       meta.textContent=bits.join(' · ');
-      exp.disabled=!yb.length;exp.title=yb.length?'Exporter l\u2019année '+cy+' en image':'Aucun livre à exporter';
+      exp.disabled=!yb.length;exp.title=yb.length?'Exporter les lectures '+yearIn(cy)+' en image':'Aucun livre à exporter';
 
       body.innerHTML='';
       if(!yb.length){
         const e=document.createElement('div');e.className='st-cw-empty';
-        e.textContent='Aucune lecture enregistrée en '+cy+'.';body.appendChild(e);return;
+        e.textContent='Aucune lecture enregistrée '+yearIn(cy)+'.';body.appendChild(e);return;
       }
       const gm={};
       yb.forEach(b=>{const g=(b.g&&b.g.trim())||'Sans genre';(gm[g]=gm[g]||[]).push(b);});
@@ -2916,7 +2927,7 @@ function buildStatsPage(){
         const nm=document.createElement('span');nm.className='st-cw-gn';nm.textContent=g;
         const ct=document.createElement('span');ct.className='st-cw-gc';ct.textContent=list.length;
         lbl.appendChild(dot);lbl.appendChild(nm);lbl.appendChild(ct);
-        lbl.title='Voir « '+g+' » en '+cy+' dans la bibliothèque';
+        lbl.title='Voir « '+g+' » '+yearIn(cy)+' dans la bibliothèque';
         lbl.addEventListener('click',()=>filterGenre(g,cy));
         const grid=document.createElement('div');grid.className='st-cw-grid';
         list.forEach(b=>grid.appendChild(mkThumb(b)));
@@ -3029,8 +3040,8 @@ function buildStatsPage(){
 
     // — Exigence par année (sparkline + aire) —
     const avgSec=document.createElement('div');avgSec.appendChild(mkh('Note moyenne par année'));
-    const byYR={};allRead.filter(b=>b.y&&b.r&&parseFloat(b.r)).forEach(b=>{if(!byYR[b.y])byYR[b.y]={s:0,c:0};byYR[b.y].s+=parseFloat(b.r);byYR[b.y].c++;});
-    const avgYrs=Object.entries(byYR).map(([y,d])=>({y,a:d.s/d.c,c:d.c})).sort((a,b)=>a.y-b.y);
+    const byYR={};allRead.filter(b=>b.y&&b.r&&parseFloat(b.r)).forEach(b=>{const k=yearKey(b.y);if(!byYR[k])byYR[k]={s:0,c:0};byYR[k].s+=parseFloat(b.r);byYR[k].c++;});
+    const avgYrs=Object.entries(byYR).map(([y,d])=>({y,a:d.s/d.c,c:d.c})).sort((a,b)=>yearSort(a.y,b.y));
     if(avgYrs.length>1){
       const aW=Math.max(300,avgYrs.length*46);const aH=120;const pL2=12,pB2=22,pT2=14;const cH2=aH-pB2-pT2;
       const aSvg=document.createElementNS(NS,'svg');aSvg.setAttribute('viewBox','0 0 '+aW+' '+aH);aSvg.style.cssText='width:100%;height:'+aH+'px;overflow:visible';
@@ -3046,13 +3057,13 @@ function buildStatsPage(){
       pts.forEach(p=>{
         const ci=document.createElementNS(NS,'circle');ci.setAttribute('cx',p.x.toFixed(1));ci.setAttribute('cy',p.y.toFixed(1));ci.setAttribute('r','3.4');
         ci.setAttribute('fill','var(--accent)');ci.setAttribute('stroke','var(--bg)');ci.setAttribute('stroke-width','1.5');
-        tipOn(ci,()=>'<strong>'+p.yr+'</strong><br>Moyenne '+p.a.toFixed(2).replace('.',',')+' ★ · '+p.c+' notés');
+        tipOn(ci,()=>'<strong>'+yearLabel(p.yr)+'</strong><br>Moyenne '+p.a.toFixed(2).replace('.',',')+' ★ · '+p.c+' notés');
         aSvg.appendChild(ci);
         const vl=document.createElementNS(NS,'text');vl.setAttribute('x',p.x.toFixed(1));vl.setAttribute('y',(p.y-7).toFixed(1));
         vl.setAttribute('text-anchor','middle');vl.setAttribute('font-size','8');vl.setAttribute('fill','var(--ink3)');vl.textContent=p.a.toFixed(1);aSvg.appendChild(vl);
         const yl=document.createElementNS(NS,'text');yl.setAttribute('x',p.x.toFixed(1));yl.setAttribute('y',(aH-6).toFixed(1));
         yl.setAttribute('text-anchor','middle');yl.setAttribute('font-size','8');
-        yl.setAttribute('fill',SCOPE===p.yr?'var(--accent)':'var(--ink3)');yl.textContent="’"+String(p.yr).slice(2);aSvg.appendChild(yl);
+        yl.setAttribute('fill',SCOPE===p.yr?'var(--accent)':'var(--ink3)');yl.textContent=yearShort(p.yr);aSvg.appendChild(yl);
       });
       const sc=document.createElement('div');sc.style.cssText='overflow-x:auto';sc.appendChild(aSvg);
       avgSec.appendChild(sc);
@@ -3170,7 +3181,7 @@ function buildStatsPage(){
       });
       pubSec.appendChild(pubList);
       const meta=document.createElement('div');meta.className='st-note';meta.style.marginTop='0.6rem';
-      meta.textContent=Object.keys(pc).length+' éditeurs distincts'+(SCOPE==='all'?' dans la bibliothèque':' en '+SCOPE)+'.';
+      meta.textContent=Object.keys(pc).length+' éditeurs distincts'+(SCOPE==='all'?' dans la bibliothèque':' '+yearIn(SCOPE))+'.';
       pubSec.appendChild(meta);
     }else{
       const n=document.createElement('div');n.className='st-note';n.textContent='Aucun éditeur renseigné.';pubSec.appendChild(n);
@@ -3195,7 +3206,7 @@ function buildStatsPage(){
       recs.push({l:'Voyage le plus lointain',b:oldest.t,s:'publié en '+oldest.pubYear+' — '+(oldest.a||'')});
     }
     if(topAuth.length){
-      recs.push({l:'Auteur fétiche',b:topAuth[0][0],s:topAuth[0][1]+' livres lus'+(SCOPE!=='all'?' en '+SCOPE:'')});
+      recs.push({l:'Auteur fétiche',b:topAuth[0][0],s:topAuth[0][1]+' livres lus'+(SCOPE!=='all'?' '+yearIn(SCOPE):'')});
     }
     // série la plus suivie
     const sc2={};allRead.filter(b=>b.series).forEach(b=>{sc2[b.series]=(sc2[b.series]||0)+1;});
@@ -3212,7 +3223,7 @@ function buildStatsPage(){
       recs.push({l:'En perspective',b:'≈ '+(proust>0?proust:'moins d\u2019')+' × la Recherche',s:(PG.pct<100?'≈ ':'')+fmtN(totalPg)+' pages, soit env. '+fmtN(Math.round(totalPg*0.25))+' minutes de lecture'});
     }
     if(!recs.length)return;
-    const sec=mkSec('Palmarès'+(SCOPE!=='all'?' '+SCOPE:''),'');
+    const sec=mkSec('Palmarès'+(SCOPE!=='all'?' '+yearIn(SCOPE):''),'');
     const grid=document.createElement('div');grid.className='st-records';
     recs.forEach(({l,b,s})=>{
       const c=document.createElement('div');c.className='st-rec';
@@ -3246,7 +3257,8 @@ function buildStatsPage(){
     barWrap.appendChild(leg);
     // temps estimé pour épuiser la pile
     const meta=document.createElement('div');meta.className='st-note';meta.style.marginTop='0.5rem';
-    const perYear=allYears.length?Math.round(allRead.filter(b=>b.y).length/allYears.length):0;
+    const _nRawY=new Set(allRead.filter(b=>b.y).map(b=>String(b.y))).size;
+    const perYear=_nRawY?Math.round(allRead.filter(b=>b.y).length/_nRawY):0;
     if(perYear>0)meta.textContent='À votre rythme moyen ('+perYear+' livres/an), la pile actuelle représente ≈ '+(toRead.length/perYear).toFixed(1).replace('.',',')+' année'+(toRead.length/perYear>=2?'s':'')+' de lecture.';
     barWrap.appendChild(meta);
     panel.appendChild(barWrap);
@@ -3370,9 +3382,10 @@ async function generateYearCard(year){
 // Carte exportable : toutes les lectures d'une année, couvertures groupées par genre.
 async function generateGenreCard(year){
   year=String(year);
-  const books=BOOKS.filter(b=>b.s==='read'&&String(b.y)===year);
-  if(!books.length){showToast('Aucun livre lu en '+year,'warn');return;}
-  showToast('🖼 Génération de la carte '+year+'…');
+  const books=BOOKS.filter(b=>b.s==='read'&&b.y&&yearMatch(b.y,year));
+  if(!books.length){showToast('Aucun livre lu '+yearIn(year),'warn');return;}
+  const yLbl=yearLabel(year),ySlug=year===OLD_YEAR_KEY?'avant-'+OLD_YEAR_CUT:year;
+  showToast('🖼 Génération de la carte '+yLbl+'…');
 
   const groups={};
   books.forEach(b=>{const g=(b.g&&b.g.trim())||'Sans genre';(groups[g]=groups[g]||[]).push(b);});
@@ -3422,7 +3435,7 @@ async function generateGenreCard(year){
     // En-tête
     ctx.textAlign='center';
     ctx.fillStyle=INK;ctx.font='400 42px Georgia,serif';ctx.fillText('MES LECTURES',W/2,130);
-    ctx.fillStyle=ACC;ctx.font='400 112px Georgia,serif';ctx.fillText(year,W/2,242);
+    ctx.fillStyle=ACC;ctx.font='400 '+(yLbl.length>6?92:112)+'px Georgia,serif';ctx.fillText(yLbl,W/2,242);
     ctx.fillStyle=INK;ctx.fillRect(W/2-58,276,116,5);
     const withR=books.filter(b=>b.r&&parseFloat(b.r));
     const avg=withR.length?(withR.reduce((s,b)=>s+parseFloat(b.r),0)/withR.length).toFixed(1).replace('.',','):'—';
@@ -3492,10 +3505,10 @@ async function generateGenreCard(year){
     catch(e2){showToast('Impossible de générer la carte','danger');return;}
   }
   const a=document.createElement('a');
-  a.href=url;a.download='mes-lectures-'+year+'-par-genre.png';
+  a.href=url;a.download='mes-lectures-'+ySlug+'-par-genre.png';
   document.body.appendChild(a);a.click();a.remove();
-  showToast('✓ Carte '+year+' téléchargée');
-  addLog('sync-ok','🖼 Carte par genre '+year,books.length+' livres · '+order.length+' genres');
+  showToast('✓ Carte '+yLbl+' téléchargée');
+  addLog('sync-ok','🖼 Carte par genre '+yLbl,books.length+' livres · '+order.length+' genres');
 }
 
 async function fetchPublisher(book){
@@ -4721,7 +4734,8 @@ function syncYearOptions(){
   const cur=sel.value;
   const years=[...new Set(BOOKS.filter(b=>b.y).map(b=>String(b.y)))].filter(y=>/^\d{4}$/.test(y)).sort();
   sel.innerHTML='<option value="">Toutes les années</option>';
-  years.forEach(y=>{const o=document.createElement('option');o.value=y;o.textContent=y;sel.appendChild(o);});
+  if(years.some(y=>yearKey(y)===OLD_YEAR_KEY)){const o=document.createElement('option');o.value=OLD_YEAR_KEY;o.textContent=yearLabel(OLD_YEAR_KEY);sel.appendChild(o);}
+  years.forEach(y=>{const o=document.createElement('option');o.value=y;o.textContent=yearLabel(y);sel.appendChild(o);});
   if([...sel.options].some(o=>o.value===cur))sel.value=cur;
 }
 syncYearOptions();
