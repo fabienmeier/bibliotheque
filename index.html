@@ -935,6 +935,7 @@ body.view-mode::after{content:'Mode lecture';position:fixed;bottom:0.8rem;right:
           <button class="more-menu-item" id="journal-btn">📋 Journal</button>
           <button class="more-menu-item" id="travail-btn">✦ Travail</button>
           <button class="more-menu-item" id="batch-fetch-btn">✦ Compléter les données</button>
+          <button class="more-menu-item" id="pages-assist-btn">📄 Pages manquantes</button>
           <button class="more-menu-item" id="gbkey-btn">🔑 Clé Google Books</button>
           <button class="more-menu-item" id="amz-help-btn">🔖 Ajouter depuis Amazon</button>
           <button class="more-menu-item" id="export-btn">↓ Exporter</button>
@@ -1304,23 +1305,70 @@ function extractIsbnFromCoverUrl(url){
   return m?m[1]:null;
 }
 
+// ── Recherche du nombre de pages ──
+// L'ancienne recherche envoyait « titre complet + auteur brut » à Open Library
+// et ne gardait que le 1er résultat : sous-titres (« : roman »), mentions BnF
+// (« Stephen . Auteur du texte King ») et éditions homonymes la faisaient
+// échouer sur la plupart des livres sans ISBN. On nettoie titre et auteur, on
+// interroge Open Library puis Google Books, et on n'accepte un nombre que si
+// le titre trouvé correspond bien à celui cherché.
+function pgCleanTitle(t){
+  return String(t||'').split(/\s*:\s|\s+[;—–]\s+|\s+\(|\s+\/\s+/)[0]
+    .replace(/[\s.:;,]+$/,'').trim();
+}
+function pgCleanAuthor(a){
+  a=String(a||'').split(',')[0]
+    .replace(/\s*\.\s*(auteur du texte|auteur|illustrateur|traducteur|dessinateur|scénariste)\b\s*/gi,' ')
+    .replace(/\s+/g,' ').trim();
+  return /^auteur inconnu$/i.test(a)?'':a;
+}
+function _pgNorm(s){
+  return String(s||'').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g,'')
+    .replace(/^(le|la|les|l|un|une|the|a|an)\s+/,'').replace(/[^a-z0-9]+/g,' ').trim();
+}
+function pgTitleOk(found,want){
+  const f=_pgNorm(pgCleanTitle(found)),w=_pgNorm(want);
+  if(!f||!w)return false;
+  if(f===w)return true;
+  return (f.length>=5&&w.startsWith(f+' '))||(w.length>=5&&f.startsWith(w+' '));
+}
+const _pgSane=n=>{n=parseInt(n,10);return n>=20&&n<=3000?n:null;};
+const _pgMedian=a=>{const s=a.slice().sort((x,y)=>x-y);return s.length%2?s[(s.length-1)/2]:Math.round((s[s.length/2-1]+s[s.length/2])/2);};
+// Renvoie {n, src} ou null. Laisse remonter les erreurs d'API (throttle…).
+async function findPagesOnline(book){
+  const isbn=extractIsbnFromCoverUrl(book.c)||'';
+  if(isbn){
+    const d=await apiJson('https://openlibrary.org/api/books?bibkeys=ISBN:'+isbn+'&jscmd=data&format=json');
+    const n=_pgSane(d['ISBN:'+isbn]&&d['ISBN:'+isbn].number_of_pages);
+    if(n)return {n:n,src:'Open Library (ISBN)'};
+  }
+  const t=pgCleanTitle(book.t),a=pgCleanAuthor(book.a);
+  if(!t)return null;
+  const last=a?a.split(' ').pop():'';
+  // Open Library : médiane des éditions du titre correspondant
+  const ol=await apiJson('https://openlibrary.org/search.json?title='+encodeURIComponent(t)
+    +(last?'&author='+encodeURIComponent(last):'')+'&limit=5&fields=title,number_of_pages_median');
+  const doc=(ol.docs||[]).find(d=>pgTitleOk(d.title,t)&&_pgSane(d.number_of_pages_median));
+  if(doc)return {n:_pgSane(doc.number_of_pages_median),src:'Open Library'};
+  // Google Books : médiane des éditions dont le titre correspond
+  const gb=await apiJson(gbUrl('volumes?q='+encodeURIComponent('intitle:"'+t+'"'+(last?' inauthor:'+last:''))
+    +'&maxResults=10&printType=books&fields=items(volumeInfo(title,pageCount))'));
+  const counts=(gb.items||[]).map(i=>i.volumeInfo||{})
+    .filter(v=>pgTitleOk(v.title,t)).map(v=>_pgSane(v.pageCount)).filter(Boolean);
+  if(counts.length)return {n:_pgMedian(counts),src:'Google Books'+(counts.length>1?' ('+counts.length+' éditions)':'')};
+  return null;
+}
 async function fetchPagesFromOL(book){
   const key=bk(book);const pages=loadPages();
   if(pages[key]) return pages[key];
   try{
-    const isbn=extractIsbnFromCoverUrl(book.c)||'';
-    let url='';
-    if(isbn) url='https://openlibrary.org/api/books?bibkeys=ISBN:'+isbn+'&jscmd=data&format=json';
-    else url='https://openlibrary.org/search.json?q='+encodeURIComponent(book.t+' '+book.a)+'&limit=1&fields=number_of_pages_median';
-    const data=await apiJson(url);
-    let n=null;
-    if(isbn){const k='ISBN:'+isbn;if(data[k]&&data[k].number_of_pages)n=data[k].number_of_pages;}
-    else if(data.docs&&data.docs[0]&&data.docs[0].number_of_pages_median)n=data.docs[0].number_of_pages_median;
-    if(n){
-      pages[key]=n;savePages(pages);
-      addLog('pages','📄 Pages récupérées — '+book.t.slice(0,50),n+' pages · Open Library');
+    const r=await findPagesOnline(book);
+    if(r){
+      const p=loadPages();p[key]=r.n;savePages(p);
+      addLog('pages','📄 Pages récupérées — '+book.t.slice(0,50),r.n+' pages · '+r.src);
+      return r.n;
     }
-    return n;
+    return null;
   }catch{return null;}
 }
 function getProgress(book){const p=loadProgress();return p[bk(book)]||null;}
@@ -2627,6 +2675,7 @@ function buildStatsPage(){
       const c=document.createElement('div');c.className='st-kpi';
       c.innerHTML='<i>'+esc(l)+'</i><b>'+v+'</b><span>'+esc(s||'')+'</span>';
       if(t){c.style.cursor='help';tipOn(c,()=>esc(t));}
+      if((l==='Pages'||l==='Pages lues')&&PG.unknown){c.style.cursor='pointer';c.addEventListener('click',()=>openPagesAssistant());}
       kGrid.appendChild(c);
     });
     wrap.appendChild(kGrid);
@@ -5565,6 +5614,164 @@ async function runBatchFetch(opts){
     setTimeout(function(){var o=document.getElementById('batch-progress');if(o)o.remove();},6000);
   },2000);
 }
+// ══ ASSISTANT « PAGES MANQUANTES » ════════════════════════════════════════
+// Liste des livres sans pagination : recherche automatique (Open Library puis
+// Google Books, titre vérifié), saisie manuelle pour le reste, et un lien de
+// recherche web pour retrouver le chiffre à la main.
+const LS_PGMISS='biblio_pages_miss';
+function pgMissLoad(){return _lsLoad(LS_PGMISS,{});}
+function pgMissSave(o){_lsSave(LS_PGMISS,o);}
+const PG_STATUS_ORDER={'currently-reading':0,'read':1,'did-not-finish':2,'to-read':3};
+const PG_STATUS_LABEL={'currently-reading':'en cours','read':'lu','did-not-finish':'abandonné','to-read':'à lire'};
+function pagesMissingList(){
+  return BOOKS.filter(b=>!getBookPages(b)).sort((x,z)=>
+    (PG_STATUS_ORDER[x.s]??9)-(PG_STATUS_ORDER[z.s]??9)
+    ||String(z.y||'').localeCompare(String(x.y||''))
+    ||x.t.localeCompare(z.t,'fr'));
+}
+let _pgRunning=false,_pgStop=false;
+function openPagesAssistant(){
+  document.getElementById('pages-assist')?.remove();
+  const ov=document.createElement('div');ov.id='pages-assist';
+  ov.style.cssText='position:fixed;inset:0;z-index:9999;background:rgba(0,0,0,0.45);display:flex;align-items:center;justify-content:center;padding:12px';
+  const box=document.createElement('div');
+  box.style.cssText='background:var(--bg);border:2px solid var(--ink);border-radius:3px;box-shadow:4px 4px 0 var(--ink);width:min(560px,100%);max-height:min(88vh,860px);display:flex;flex-direction:column';
+  const head=document.createElement('div');head.style.cssText='padding:1.1rem 1.2rem 0.8rem;border-bottom:1px solid var(--line)';
+  const ttl=document.createElement('div');ttl.style.cssText='display:flex;justify-content:space-between;align-items:baseline;gap:0.5rem';
+  ttl.innerHTML='<strong style="font-size:0.72rem;text-transform:uppercase;letter-spacing:0.12em">📄 Pages manquantes</strong>';
+  const close=document.createElement('button');close.className='action-btn';close.textContent='Fermer';close.style.fontSize='0.7rem';
+  ttl.appendChild(close);head.appendChild(ttl);
+  const sum=document.createElement('div');sum.style.cssText='font-size:0.72rem;color:var(--ink3);margin:0.45rem 0 0.7rem;line-height:1.4';
+  head.appendChild(sum);
+  const tabs=document.createElement('div');tabs.style.cssText='display:flex;gap:0.35rem;flex-wrap:wrap;margin-bottom:0.7rem';
+  head.appendChild(tabs);
+  const auto=document.createElement('button');auto.className='btn-submit';auto.style.cssText='width:100%;font-size:0.8rem;padding:0.55rem';
+  head.appendChild(auto);
+  const prog=document.createElement('div');prog.style.cssText='font-size:0.68rem;color:var(--ink3);margin-top:0.45rem;min-height:1em;line-height:1.35';
+  head.appendChild(prog);
+  const list=document.createElement('div');list.style.cssText='overflow-y:auto;padding:0.3rem 1.2rem 1rem;-webkit-overflow-scrolling:touch';
+  box.appendChild(head);box.appendChild(list);ov.appendChild(box);document.body.appendChild(ov);
+
+  let scope=window._pgScope||'read';
+  let found=0,manual=0;
+  const rows=new Map();
+  const inScopeB=b=>scope==='all'||(scope==='read'?b.s!=='to-read':b.s==='to-read');
+
+  function finish(){
+    _pgStop=true;ov.remove();
+    if(found||manual){
+      try{render();}catch(e){}
+      try{if(document.getElementById('page-stats')?.offsetParent!==null)buildStatsPage();}catch(e){}
+      showToast('📄 '+(found+manual)+' pagination'+(found+manual>1?'s':'')+' ajoutée'+(found+manual>1?'s':'')+' — pense à synchroniser (⟳ GitHub)');
+    }
+  }
+  close.onclick=finish;
+  ov.addEventListener('click',e=>{if(e.target===ov)finish();});
+
+  function savePg(b,n,src){
+    const p=loadPages();p[bk(b)]=n;savePages(p);
+    const m=pgMissLoad();if(m[bk(b)]){delete m[bk(b)];pgMissSave(m);}
+    addLog('pages','📄 Pages '+(src?'récupérées':'saisies')+' — '+b.t.slice(0,50),n+' pages · '+(src||'saisie manuelle'));
+  }
+  function markDone(b,n,src){
+    const r=rows.get(bk(b));if(!r)return;
+    r.el.style.opacity='0.55';
+    r.st.textContent='✓ '+n+' p.'+(src?' · '+src:'');r.st.style.color='var(--accent)';
+    r.inp.value=n;r.inp.disabled=true;r.ok.disabled=true;
+  }
+  function refreshSum(){
+    const all=pagesMissingList();
+    const nRead=all.filter(b=>b.s!=='to-read').length;
+    sum.innerHTML='<b style="color:var(--ink)">'+all.length+'</b> livre'+(all.length>1?'s':'')+' sans pagination · '+nRead+' lus ou en cours · '+(all.length-nRead)+' à lire'
+      +(found||manual?'<br>Cette session : '+found+' trouvé'+(found>1?'s':'')+' automatiquement, '+manual+' saisi'+(manual>1?'s':'')+' à la main':'');
+  }
+  function paintTabs(){
+    tabs.innerHTML='';
+    [['read','Lus / en cours'],['to-read','À lire'],['all','Tous']].forEach(([v,l])=>{
+      const b=document.createElement('button');b.className='action-btn';b.textContent=l;b.style.fontSize='0.7rem';
+      if(v===scope){b.style.background='var(--ink)';b.style.color='var(--bg)';}
+      b.onclick=()=>{if(_pgRunning)return;scope=window._pgScope=v;paintTabs();paintList();};
+      tabs.appendChild(b);
+    });
+  }
+  function paintList(){
+    list.innerHTML='';rows.clear();
+    const todo=pagesMissingList().filter(inScopeB);
+    const miss=pgMissLoad();
+    auto.textContent='🔎 Rechercher automatiquement ('+todo.length+')';
+    auto.disabled=!todo.length;
+    if(!todo.length){
+      const e=document.createElement('div');e.style.cssText='padding:2rem 0;text-align:center;color:var(--ink3);font-size:0.8rem';
+      e.textContent='Rien à compléter ici 🎉';list.appendChild(e);return;
+    }
+    todo.forEach(b=>{
+      const el=document.createElement('div');el.style.cssText='display:flex;align-items:center;gap:0.6rem;padding:0.55rem 0;border-bottom:1px solid var(--line)';
+      const info=document.createElement('div');info.style.cssText='flex:1;min-width:0;cursor:pointer';
+      const t=document.createElement('div');t.style.cssText='font-size:0.8rem;color:var(--ink);line-height:1.25;overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical';
+      t.textContent=b.t;
+      const s=document.createElement('div');s.style.cssText='font-size:0.66rem;color:var(--ink3);margin-top:0.1rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis';
+      s.textContent=(pgCleanAuthor(b.a)||'auteur inconnu')+' · '+(PG_STATUS_LABEL[b.s]||b.s)+(b.y?' '+b.y:'')+(b.pub?' · '+b.pub:'');
+      const st=document.createElement('div');st.style.cssText='font-size:0.64rem;color:var(--ink3);margin-top:0.1rem';
+      if(miss[bk(b)])st.textContent='introuvable en ligne — saisie manuelle';
+      info.appendChild(t);info.appendChild(s);info.appendChild(st);
+      info.onclick=()=>{finish();openModal(b);};
+      const web=document.createElement('a');web.textContent='🔍';web.title='Chercher le nombre de pages sur le web';
+      web.href='https://www.google.com/search?q='+encodeURIComponent('"'+pgCleanTitle(b.t)+'" '+pgCleanAuthor(b.a)+' nombre de pages');
+      web.target='_blank';web.rel='noopener';web.style.cssText='text-decoration:none;font-size:1rem;padding:0.2rem';
+      const inp=document.createElement('input');inp.type='number';inp.inputMode='numeric';inp.min='1';inp.max='5000';inp.placeholder='p.';
+      inp.style.cssText='width:4.4rem;font:inherit;font-size:0.85rem;padding:0.35rem 0.4rem;border:1px solid var(--line);background:var(--bg);color:var(--ink);border-radius:2px';
+      const ok=document.createElement('button');ok.className='action-btn';ok.textContent='OK';ok.style.cssText='font-size:0.72rem;padding:0.35rem 0.55rem';
+      const commit=()=>{const n=parseInt(inp.value,10);
+        if(!(n>0&&n<=5000)){inp.style.borderColor='#dc2626';return;}
+        savePg(b,n,'');manual++;markDone(b,n,'');refreshSum();};
+      ok.onclick=commit;inp.addEventListener('keydown',e=>{if(e.key==='Enter')commit();});
+      el.appendChild(info);el.appendChild(web);el.appendChild(inp);el.appendChild(ok);
+      list.appendChild(el);
+      rows.set(bk(b),{el,st,inp,ok});
+    });
+  }
+
+  auto.onclick=async()=>{
+    if(_pgRunning){_pgStop=true;return;}
+    if(inCooldown()){prog.textContent='⏳ Les API demandent une pause : réessaie dans '+cooldownLeft()+' s.';return;}
+    const miss=pgMissLoad();const now=Date.now();
+    // On ne re-cherche pas avant 30 jours un livre déjà introuvable.
+    const todo=pagesMissingList().filter(inScopeB).filter(b=>!(miss[bk(b)]&&now-miss[bk(b)]<30*864e5));
+    if(!todo.length){prog.textContent='Tous les livres de cette liste ont déjà été cherchés récemment : complète-les à la main.';return;}
+    _pgRunning=true;_pgStop=false;auto.textContent='■ Arrêter';
+    let done=0,nf=0,err=0,thr=0;
+    for(const b of todo){
+      if(_pgStop||!document.body.contains(ov))break;
+      if(getBookPages(b)){done++;continue;}
+      const r0=rows.get(bk(b));if(r0){r0.st.textContent='recherche…';r0.st.style.color='var(--ink3)';
+        r0.el.scrollIntoView&&r0.el.scrollIntoView({block:'nearest'});}
+      try{
+        const r=await findPagesOnline(b);
+        thr=0;
+        if(r){savePg(b,r.n,r.src);found++;markDone(b,r.n,r.src);}
+        else{nf++;const m=pgMissLoad();m[bk(b)]=Date.now();pgMissSave(m);
+          if(r0)r0.st.textContent='introuvable en ligne — saisie manuelle';}
+      }catch(e){
+        if(e&&e._throttled){thr++;
+          if(r0)r0.st.textContent='';
+          if(thr>=2||inCooldown()){prog.textContent='⏳ Les API limitent les requêtes : pause de '+cooldownLeft()+' s. Relance ensuite, la recherche reprendra où elle s’est arrêtée.';break;}
+        }else{err++;if(r0)r0.st.textContent='erreur réseau';}
+      }
+      done++;
+      if(!prog.textContent.startsWith('⏳'))prog.textContent=done+' / '+todo.length+' · '+found+' trouvé'+(found>1?'s':'')+' · '+nf+' introuvable'+(nf>1?'s':'')+(err?' · '+err+' erreur'+(err>1?'s':''):'');
+      refreshSum();
+      await new Promise(r=>setTimeout(r,700));
+    }
+    _pgRunning=false;
+    if(!document.body.contains(ov))return;
+    if(!prog.textContent.startsWith('⏳'))prog.textContent='Terminé : '+found+' trouvé'+(found>1?'s':'')+', '+nf+' introuvable'+(nf>1?'s':'')+'. Les introuvables se complètent à la main (🔍 aide à chercher).';
+    auto.textContent='🔎 Rechercher automatiquement ('+pagesMissingList().filter(inScopeB).length+')';
+    if(found)addLog('pages','📄 Recherche de pages',found+' trouvées · '+nf+' introuvables');
+  };
+
+  refreshSum();paintTabs();paintList();
+}
+document.getElementById('pages-assist-btn')?.addEventListener('click',function(){window.closeMoreMenu&&window.closeMoreMenu();setTimeout(openPagesAssistant,50);});
 document.getElementById('batch-fetch-btn')?.addEventListener('click',function(){window.closeMoreMenu&&window.closeMoreMenu();setTimeout(function(){openBatchFetchModal();},50);});
 
 // Saisie de la clé Google Books depuis l'interface : sur mobile il n'existe
